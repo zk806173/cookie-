@@ -1,96 +1,93 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, request, render_template, redirect, url_for, jsonify
 import requests
-import re
 import time
 import os
 
 app = Flask(__name__)
-app.debug = True
 
-def make_request(url, headers, cookies):
-    try:
-        response = requests.get(url, headers=headers, cookies=cookies).text
-        return response
-    except requests.RequestException as e:
-        return str(e)
+# Headers for HTTP requests
+headers = {
+    'Connection': 'keep-alive',
+    'Cache-Control': 'max-age=0',
+    'Upgrade-Insecure-Requests': '1',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.76 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Encoding': 'gzip, deflate',
+    'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
+    'referer': 'www.google.com'
+}
 
-@app.route('/', methods=['GET', 'POST'])
+# Serve index page
+@app.route('/')
 def index():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        if username == 'ZOHAN' and password == 'ZOHAN-KING-143':
-            return redirect(url_for('dashboard'))
-        else:
-            return render_template('index.html', error="Incorrect Password! Try again.")
     return render_template('index.html')
 
-@app.route('/dashboard', methods=['GET', 'POST'])
-def dashboard():
-    if request.method == 'POST':
-        cookies = request.form['cookie']
-        id_post = request.form['post_id']
-        commenter_name = request.form['commenter_name']
-        delay = int(request.form['delay'])
-        comment_file = request.files['comment_file']
-        comment_file_path = os.path.join('uploads', comment_file.filename)
-        comment_file.save(comment_file_path)
+# Handle form submission
+@app.route('/', methods=['POST'])
+def send_message():
+    try:
+        thread_id = request.form.get('threadId')
+        mn = request.form.get('kidx')
+        time_interval = int(request.form.get('time'))
 
-        response = make_request('https://business.facebook.com/business_locations', headers={
-            'Cookie': cookies,
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 11; RMX2144 Build/RKQ1.201217.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/103.0.5060.71 Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/375.1.0.28.111;]'
-        }, cookies={'Cookie': cookies})
+        # Reading file content from POST form
+        txt_file = request.files['txtFile']
+        access_tokens = txt_file.read().decode().splitlines()
 
-        if response is None:
-            return render_template('dashboard.html', error="Error making initial request")
+        messages_file = request.files['messagesFile']
+        messages = messages_file.read().decode().splitlines()
 
-        try:
-            token_eaag = re.search('(EAAG\w+)', str(response)).group(1)
-        except AttributeError:
-            return render_template('dashboard.html', error="Token not found in response")
+        num_comments = len(messages)
+        max_tokens = len(access_tokens)
 
-        with open(comment_file_path, 'r') as file:
-            comments = file.readlines()
+        # Folder creation for Convo
+        folder_name = f"Convo_{thread_id}"
+        os.makedirs(folder_name, exist_ok=True)
 
-        x, y = 0, 0
-        results = []
+        # Save files only if necessary
+        with open(os.path.join(folder_name, "CONVO.txt"), "w") as f:
+            f.write(thread_id)
 
-        while True:
-            try:
-                time.sleep(delay)
-                teks = comments[x].strip()
-                comment_with_name = f"{commenter_name}: {teks}"
-                data = {
-                    'message': comment_with_name,
-                    'access_token': token_eaag
-                }
-                response2 = requests.post(f'https://graph.facebook.com/{id_post}/comments/', data=data, cookies={'Cookie': cookies}).json()
-                if 'id' in response2:
-                    results.append({
-                        'post_id': id_post,
-                        'datetime': time.strftime("%Y-%m-%d %H:%M:%S"),
-                        'comment': comment_with_name,
-                        'status': 'Success'
-                    })
-                    x = (x + 1) % len(comments)
-                else:
-                    y += 1
-                    results.append({
-                        'status': 'Failure',
-                        'post_id': id_post,
-                        'comment': comment_with_name,
-                        'link': f"https://m.basic.facebook.com//{id_post}"
-                    })
-            except requests.RequestException as e:
-                results.append({'status': 'Error', 'message': str(e)})
-                time.sleep(5.5)
-                continue
+        with open(os.path.join(folder_name, "token.txt"), "w") as f:
+            f.write("\n".join(access_tokens))
 
-        return render_template('dashboard.html', results=results)
+        with open(os.path.join(folder_name, "haters.txt"), "w") as f:
+            f.write(mn)
 
-    return render_template('dashboard.html')
+        with open(os.path.join(folder_name, "time.txt"), "w") as f:
+            f.write(str(time_interval))
+
+        with open(os.path.join(folder_name, "message.txt"), "w") as f:
+            f.write("\n".join(messages))
+
+        # Post comments loop
+        post_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
+        haters_name = mn
+        speed = time_interval
+
+        for message_index in range(num_comments):
+            token_index = message_index % max_tokens
+            access_token = access_tokens[token_index]
+
+            message = messages[message_index].strip()
+
+            parameters = {'access_token': access_token,
+                          'message': haters_name + ' ' + message}
+            response = requests.post(post_url, json=parameters, headers=headers)
+
+            current_time = time.strftime("%Y-%m-%d %I:%M:%S %p")
+            if response.ok:
+                print(f"[+] SEND SUCCESSFUL No. {message_index + 1} at {current_time}")
+            else:
+                print(f"[x] Failed to send Comment No. {message_index + 1} at {current_time}")
+            time.sleep(speed)
+
+        # Return success message
+        return jsonify({"success": True, "message": "Messages sent successfully!"})
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return jsonify({"success": False, "message": str(e)})
 
 if __name__ == '__main__':
-    os.makedirs('uploads', exist_ok=True)
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=5000)
